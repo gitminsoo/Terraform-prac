@@ -1,0 +1,29 @@
+# Terraform 로컬 디렉터리 및 캐시
+.terraform/
+.terraform.lock.hcl
+
+# State 파일 (로컬 state는 절대 커밋 금지 — 비밀값 포함 가능)
+*.tfstate
+*.tfstate.backup
+*.tfstate.*.backup
+
+# Plan 파일 (바이너리, 환경 종속적)
+*.tfplan
+*.plan
+
+# 변수 파일 (비밀값/계정정보 포함 가능)
+*.tfvars
+*.tfvars.json
+
+# 크래시 로그
+crash.log
+crash.*.log
+
+# OS 잡파일
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
