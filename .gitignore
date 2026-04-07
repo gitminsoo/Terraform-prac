@@ -31,3 +31,6 @@ Thumbs.db
 
 # Terragrunt 캐시
 .terragrunt-cache
+
+# Terraform Cloud 작업 디렉터리
+terraform.tfvars.example
