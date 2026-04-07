@@ -1,23 +1,7 @@
-# [수정] Ubuntu 24.04 LTS AMI 동적 조회 (ami_id 변수 하드코딩 방식 제거)
-data "aws_ami" "ubuntu" {
-  most_recent = true
-  owners      = ["099720109477"] # Canonical
 
-  filter {
-    name   = "name"
-    values = ["ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-*"]
-  }
-}
-
-# [수정] 가용 영역 목록 동적 조회 (AZ 하드코딩 방지)
 data "aws_availability_zones" "available" {
   state = "available"
 }
-
-# -------------------------------------------------------
-# [수정] VPC 및 네트워크 리소스를 모듈 내부에서 직접 생성
-#        (기존: 외부에서 vpc_id / subnet_ids를 입력받던 구조)
-# -------------------------------------------------------
 
 # VPC
 resource "aws_vpc" "main" {
@@ -223,7 +207,7 @@ resource "aws_lb_listener" "http" {
 # Launch Template
 resource "aws_launch_template" "main" {
   name          = "KMS-LT-${var.env}"
-  image_id      = data.aws_ami.ubuntu.id 
+  image_id      = var.ami_id
   instance_type = var.instance_type
 
   network_interfaces {
