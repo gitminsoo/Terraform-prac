@@ -1,0 +1,8 @@
+# terraform.tfvars.example
+# 이 파일을 복사해서 terraform.tfvars 로 이름 변경 후 실제 값 입력
+# terraform.tfvars 는 .gitignore 에 의해 커밋되지 않음
+
+aws_region    = "ap-south-1"
+instance_type = "t3.micro"
+environment   = "dev"
+project       = "KMS"

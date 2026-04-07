@@ -1,0 +1,109 @@
+# ---------------------------------------------------------
+# 워크플로우의 이름. GitHub 리포지토리 'Actions' 탭에 이 이름으로 표시됩니다.
+# ---------------------------------------------------------
+name: Terraform CI/CD
+
+# ---------------------------------------------------------
+# 'on' 블록: 이 파이프라인(가상 서버)이 언제 켜질지 '조건'을 설정합니다.
+# ---------------------------------------------------------
+on:
+  push:
+    branches: [main]       # [조건 1] 'main' 브랜치에 코드를 푸시하거나 Merge 할 때 켜집니다.
+  pull_request:
+    branches: [main]       # [조건 2] 'main' 브랜치를 향해 PR(Pull Request)을 날리거나 업데이트할 때 켜집니다.
+
+# ---------------------------------------------------------
+# [중요 변경점] permissions 블록: 가상 서버(러너)의 권한 설정
+# 이전 코드에서는 job 안에 있었지만, 전체 워크플로우 레벨로 뺐습니다.
+# ---------------------------------------------------------
+permissions:
+  contents: read           # 내 저장소의 코드는 '읽기'만 가능하도록 제한
+  pull-requests: write     # PR 화면에 플랜 결과를 '댓글로 달아야(쓰기)' 하므로 권한 부여
+  id-token: write          # [핵심] GitHub이 AWS에 "나 인증된 서버야!"라고 증명할 수 있는 임시 신분증(OIDC 토큰)을 발급받기 위한 필수 권한입니다.
+
+# ---------------------------------------------------------
+# 'env' 블록: 파이프라인 전체에서 공통으로 사용할 환경 변수를 설정합니다.
+# ---------------------------------------------------------
+env:
+  AWS_REGION: "ap-south-1" # 배포할 AWS 기본 리전 (인도 뭄바이)
+  TF_VERSION: "1.9.0"      # 사용할 테라폼 버전 지정 (1.9.0으로 업데이트 됨)
+
+jobs:
+  terraform:
+    name: Terraform             # 이 작업의 표시 이름
+    runs-on: ubuntu-latest      # GitHub이 띄워줄 가상 서버의 운영체제 (최신 우분투)
+
+    # ---------------------------------------------------------
+    # 'steps': 가상 서버 안에서 위에서 아래로 순서대로 실행될 단계들입니다.
+    # ---------------------------------------------------------
+    steps:
+      # [1단계] 내 GitHub 저장소의 코드를 가상 서버 안으로 다운로드(체크아웃) 받습니다.
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # [2단계] 텅 빈 우분투 서버에 지정한 버전(1.9.0)의 테라폼을 설치합니다.
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      # [3단계] AWS 자격증명 설정 (OIDC 방식 도입!)
+      # 유출 위험이 있는 영구적인 엑세스 키(Access Key)를 저장해두고 쓰는 대신,
+      # GitHub과 AWS를 미리 신뢰 관계로 묶어두고(OIDC), 필요할 때만 짧은 시간 유효한 임시 권한을 받아오는 아주 안전한 방식입니다.
+      - name: Configure AWS Credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          # "AWS야, 나 이 역할(Role)로 임시 변신할게 허락해줘!" (GitHub Secrets에 미리 생성한 AWS IAM Role ARN 저장)
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }} 
+          aws-region: ${{ env.AWS_REGION }}           # 아까 설정한 ap-south-1 리전 사용
+
+      # [4단계] 테라폼 초기화 (플러그인 다운로드 및 S3 백엔드 연결)
+      - name: Terraform Init
+        run: terraform init
+
+      # [5단계] 테라폼 코드의 띄어쓰기, 들여쓰기 형식이 규칙에 맞는지 검사합니다.
+      - name: Terraform Format Check
+        run: terraform fmt -check
+
+      # [6단계] 테라폼 코드의 문법이나 오타에 오류가 없는지 유효성 검사를 합니다.
+      - name: Terraform Validate
+        run: terraform validate
+
+      # [7단계] 인프라 변경사항 견적서 뽑기 (Plan)
+      - name: Terraform Plan
+        if: github.event_name == 'pull_request'  # 코드가 PR로 올라왔을 때만 실행합니다!
+        id: plan                                 # 이 단계의 결과물에 'plan'이라는 이름표를 붙입니다.
+        run: terraform plan -no-color            # 색상 코드를 빼고 순수 텍스트로만 결과를 출력합니다.
+        continue-on-error: true                  # 실패하더라도 멈추지 않고 다음 단계(댓글달기)로 넘어가게 해줍니다.
+
+      # [8단계] 위에서 뽑은 견적서(plan) 결과를 PR 창에 자동으로 '댓글'로 달아줍니다.
+      - name: Comment Plan Result on PR
+        if: github.event_name == 'pull_request'  # PR 상황에서만 실행합니다.
+        uses: actions/github-script@v7           # 자바스크립트 코드를 실행하게 해주는 모듈입니다.
+        with:
+          script: |
+            // 댓글 템플릿 생성 (7단계의 결과물 터미널 출력값을 그대로 가져옵니다)
+            const output = `#### Terraform Plan 결과
+            \`\`\`
+            ${{ steps.plan.outputs.stdout }}
+            \`\`\`
+            > Plan 상태: ${{ steps.plan.outcome }}`;
+            
+            // GitHub API를 호출해서 내 PR에 방금 만든 템플릿으로 댓글을 작성합니다.
+            github.rest.issues.createComment({
+              issue_number: context.issue.number, // 현재 PR 번호
+              owner: context.repo.owner,          // 내 계정 이름
+              repo: context.repo.repo,            // 내 저장소 이름
+              body: output                        // 댓글 내용
+            });
+
+      # [8.5단계] 만약 7단계(plan)가 실패했다면, 댓글을 달아준 후 워크플로우를 강제로 "실패" 처리합니다.
+      - name: Terraform Plan Status
+        if: github.event_name == 'pull_request' && steps.plan.outcome == 'failure'
+        run: exit 1   # 터미널에서 강제 종료를 의미하는 명령어입니다.
+
+      # [9단계] 인프라 실제 배포 (Apply)
+      - name: Terraform Apply
+        # 오직 'push' 이벤트이면서, 그 푸시된 브랜치가 'main'일 때만 실행합니다! (PR 단계에서는 절대 실행 안 됨)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: terraform apply -auto-approve       # 중간 승인 과정 없이 바로 클라우드에 공사 시작
